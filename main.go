@@ -15,14 +15,12 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 
 	ds "github.com/ipfs/go-datastore"
-	"github.com/ipfs/go-ipfs-addr"
 	logging "github.com/ipfs/go-log"
 	libp2p "github.com/libp2p/go-libp2p"
-	host "github.com/libp2p/go-libp2p-host"
+	host "github.com/libp2p/go-libp2p-core/host"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
-	peer "github.com/libp2p/go-libp2p-peer"
-	pstore "github.com/libp2p/go-libp2p-peerstore"
-	ma "github.com/multiformats/go-multiaddr"
+	peer "github.com/libp2p/go-libp2p-core/peer"
+	multiaddr "github.com/multiformats/go-multiaddr"
 	mh "github.com/multiformats/go-multihash"
 
 	noise "github.com/libp2p/go-libp2p-noise"
@@ -72,8 +70,6 @@ func init() {
 
 var log = logging.Logger("dht_scrape")
 
-var bspi []pstore.PeerInfo
-
 var DefaultBootstrapAddresses = []string{
 	"/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",  // mars.i.ipfs.io
 	"/ip4/104.236.179.241/tcp/4001/ipfs/QmSoLPppuBtQSGwKDZT2M73ULpjvfd3aZ6ha4oFGL1KrGM", // pluto.i.ipfs.io
@@ -83,20 +79,6 @@ var DefaultBootstrapAddresses = []string{
 	"/ip4/104.236.151.122/tcp/4001/ipfs/QmSoLju6m7xTh3DuokvT3886QRYqxAzb1kShaanJgW36yx",
 	"/ip4/188.40.114.11/tcp/4001/ipfs/QmZY7MtK8ZbG1suwrxc7xEYZ2hQLf1dAWPRHhjxC8rjq8E",
 	"/ip4/5.9.59.34/tcp/4001/ipfs/QmRv1GNseNP1krEwHDjaQMeQVJy41879QcDwpJVhY8SWve",
-}
-
-func init() {
-	for _, a := range DefaultBootstrapAddresses {
-		ia, err := ipfsaddr.ParseString(a)
-		if err != nil {
-			panic(err)
-		}
-
-		bspi = append(bspi, pstore.PeerInfo{
-			ID:    ia.ID(),
-			Addrs: []ma.Multiaddr{ia.Transport()},
-		})
-	}
 }
 
 func handlePromWithAuth(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +133,7 @@ func buildHostAndScrapePeers(db *leveldb.DB) error {
 		libp2p.Security(tls.ID, tls.New),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.Security(secio.ID, secio.New),
-		)
+	)
 	if err != nil {
 		return err
 	}
@@ -164,7 +146,7 @@ func buildHostAndScrapePeers(db *leveldb.DB) error {
 	mds := ds.NewMapDatastore()
 	mdht := dht.NewDHT(ctx, h, mds)
 
-	bootstrap(ctx, h)
+	bootstrap(ctx, h, DefaultBootstrapAddresses)
 
 	fmt.Println("starting new scrape round...")
 	for i := 0; i < 15; i++ {
@@ -255,17 +237,29 @@ func getStats(db *leveldb.DB) error {
 }
 
 // bootstrap (TODO: choose from larger group of peers)
-func bootstrap(ctx context.Context, h host.Host) {
+func bootstrap(ctx context.Context, h host.Host, addrs []string) {
 	var wg sync.WaitGroup
-	for i := 0; i < len(bspi); i++ {
+	for _, addr := range addrs {
 		wg.Add(1)
-		go func(i int) {
+		go func(addr string) {
 			defer wg.Done()
-			v := len(bspi) - (1 + i)
-			if err := h.Connect(ctx, bspi[v]); err != nil {
-				log.Error(bspi[v], err)
+
+			ma, err := multiaddr.NewMultiaddr(addr)
+			if err != nil {
+				log.Error(err)
+				return
 			}
-		}(i)
+
+			ai, err := peer.AddrInfoFromP2pAddr(ma)
+			if err != nil {
+				log.Error(err)
+				return
+			}
+
+			if err := h.Connect(ctx, *ai); err != nil {
+				log.Error(addr, err)
+			}
+		}(addr)
 	}
 	wg.Wait()
 }
