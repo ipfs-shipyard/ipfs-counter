@@ -2,7 +2,6 @@ module github.com/ipfs-shipyard/ipfs-counter
 
 go 1.21
 
-
 require (
 	cloud.google.com/go v0.75.0
 	cloud.google.com/go/bigquery v1.15.0
